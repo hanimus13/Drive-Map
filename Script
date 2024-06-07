@@ -1,0 +1,111 @@
+# Import necessary assemblies
+Add-Type -AssemblyName System.Windows.Forms
+
+# Create the form
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Map Network Drive"
+$form.Width = 400
+$form.Height = 350
+
+# Create labels and textboxes for input
+$labelIP = New-Object System.Windows.Forms.Label
+$labelIP.Text = "Target IP Address:"
+$labelIP.AutoSize = $true
+$labelIP.Location = New-Object System.Drawing.Point(10, 20)
+$form.Controls.Add($labelIP)
+
+$textBoxIP = New-Object System.Windows.Forms.TextBox
+$textBoxIP.Location = New-Object System.Drawing.Point(150, 20)
+$textBoxIP.Width = 200
+$form.Controls.Add($textBoxIP)
+
+$labelDriveLetter = New-Object System.Windows.Forms.Label
+$labelDriveLetter.Text = "Drive Letter:"
+$labelDriveLetter.AutoSize = $true
+$labelDriveLetter.Location = New-Object System.Drawing.Point(10, 60)
+$form.Controls.Add($labelDriveLetter)
+
+$textBoxDriveLetter = New-Object System.Windows.Forms.TextBox
+$textBoxDriveLetter.Location = New-Object System.Drawing.Point(150, 60)
+$textBoxDriveLetter.Width = 200
+$form.Controls.Add($textBoxDriveLetter)
+
+$labelShareName = New-Object System.Windows.Forms.Label
+$labelShareName.Text = "Share Name:"
+$labelShareName.AutoSize = $true
+$labelShareName.Location = New-Object System.Drawing.Point(10, 100)
+$form.Controls.Add($labelShareName)
+
+$textBoxShareName = New-Object System.Windows.Forms.TextBox
+$textBoxShareName.Location = New-Object System.Drawing.Point(150, 100)
+$textBoxShareName.Width = 200
+$form.Controls.Add($textBoxShareName)
+
+# Create a checkbox for requiring credentials
+$checkBoxCredentials = New-Object System.Windows.Forms.CheckBox
+$checkBoxCredentials.Text = "Require Credentials"
+$checkBoxCredentials.Location = New-Object System.Drawing.Point(150, 140)
+$form.Controls.Add($checkBoxCredentials)
+
+# Create a button to map the drive
+$buttonMapDrive = New-Object System.Windows.Forms.Button
+$buttonMapDrive.Text = "Map Drive"
+$buttonMapDrive.Location = New-Object System.Drawing.Point(150, 180)
+$form.Controls.Add($buttonMapDrive)
+
+# Define the function to map the drive
+$buttonMapDrive.Add_Click({
+    $ipAddress = $textBoxIP.Text
+    $driveLetter = $textBoxDriveLetter.Text
+    $shareName = $textBoxShareName.Text
+    $networkPath = "\\$ipAddress\$shareName"
+    
+    # Validate input
+    if ($ipAddress -eq "" -or $driveLetter -eq "" -or $shareName -eq "") {
+        [System.Windows.Forms.MessageBox]::Show("Please fill in all fields.")
+        return
+    }
+
+    if ($driveLetter.Length -ne 1 -or $driveLetter -notmatch "^[A-Z]$") {
+        [System.Windows.Forms.MessageBox]::Show("Please enter a valid drive letter (A-Z).")
+        return
+    }
+
+    # Ping the IP address to check if it's reachable
+    $pingResult = Test-Connection -ComputerName $ipAddress -Count 1 -Quiet
+    if (-not $pingResult) {
+        [System.Windows.Forms.MessageBox]::Show("The IP address is not reachable. Please check the network connection.")
+        return
+    }
+
+    try {
+        # If credentials are required, prompt for them
+        if ($checkBoxCredentials.Checked) {
+            $credential = Get-Credential -Message "Enter credentials for $networkPath"
+            $user = $credential.UserName
+            $password = $credential.GetNetworkCredential().Password
+            $cmd = "net use ${driveLetter}: $networkPath /user:$user $password /persistent:yes"
+        } else {
+            $cmd = "net use ${driveLetter}: $networkPath /persistent:yes"
+        }
+        
+        # Map the network drive using net use
+        Start-Process cmd.exe -ArgumentList "/c $cmd" -Wait -NoNewWindow
+        
+        # Add to registry for persistence
+        $regPath = "HKCU:\Network\$driveLetter"
+        New-Item -Path $regPath -Force | Out-Null
+        Set-ItemProperty -Path $regPath -Name "RemotePath" -Value $networkPath
+        
+        # Confirmation message
+        [System.Windows.Forms.MessageBox]::Show("Drive mapped successfully!")
+    }
+    catch {
+        # Error message
+        [System.Windows.Forms.MessageBox]::Show("Failed to map drive: $($_.Exception.Message)")
+    }
+})
+
+# Run the form
+$form.Add_Shown({$form.Activate()})
+[System.Windows.Forms.Application]::Run($form)
