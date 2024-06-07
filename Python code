@@ -1,0 +1,173 @@
+import tkinter as tk
+from tkinter import messagebox, filedialog, simpledialog
+import subprocess
+
+
+def check_ip_address():
+    ip_address = entry_ip.get()
+    if not ip_address:
+        messagebox.showwarning("Input Error", "Please enter the target IP address.")
+        return
+
+    # Check if the IP address is reachable
+    try:
+        result = subprocess.check_output(["ping", "-n", "1", ip_address], stderr=subprocess.STDOUT,
+                                         universal_newlines=True)
+        if "Destination host unreachable" in result or "Request timed out" in result:
+            raise subprocess.CalledProcessError(1, result, output=result)
+        label_status.config(text="Target Machine Online", fg="green")
+    except subprocess.CalledProcessError:
+        label_status.config(text="Target Machine Offline", fg="red")
+
+
+def is_drive_letter_available(drive_letter):
+    try:
+        result = subprocess.check_output("wmic logicaldisk get name", shell=True, stderr=subprocess.STDOUT,
+                                         universal_newlines=True)
+        return f"{drive_letter}:" not in result
+    except subprocess.CalledProcessError:
+        return False
+
+
+def disconnect_drive(drive_letter):
+    try:
+        result = subprocess.check_output(f"net use {drive_letter}: /delete", shell=True, stderr=subprocess.STDOUT,
+                                         universal_newlines=True)
+        if "could not be found" in result.lower():
+            messagebox.showinfo("Info", f"The drive {drive_letter}: was not connected.")
+        else:
+            messagebox.showinfo("Info", f"Disconnected existing drive {drive_letter}:")
+    except subprocess.CalledProcessError as e:
+        if "The network connection could not be found" in e.output:
+            messagebox.showinfo("Info", f"The drive {drive_letter}: was not connected.")
+        else:
+            messagebox.showwarning("Error", f"Failed to disconnect drive {drive_letter}: {e.output}")
+
+
+def map_drive():
+    ip_address = entry_ip.get()
+    drive_letter = entry_drive.get()
+    share_names = entry_share.get()
+    target_drive = entry_target_drive.get().upper()
+
+    if not ip_address or not drive_letter or not share_names or not target_drive:
+        messagebox.showwarning("Input Error", "Please fill in all fields.")
+        return
+
+    if len(drive_letter) != 1 or not drive_letter.isalpha() or not drive_letter.isupper():
+        messagebox.showwarning("Input Error", "Please enter a valid drive letter (A-Z).")
+        return
+
+    if len(target_drive) != 1 or not target_drive.isalpha() or not target_drive.isupper():
+        messagebox.showwarning("Input Error", "Please enter a valid target drive letter (A-Z).")
+        return
+
+    # Check if the drive letter is available
+    if not is_drive_letter_available(drive_letter):
+        disconnect_drive(drive_letter)
+
+    # Map each share name as a network drive
+    for share_name in share_names.split(';'):
+        network_path = f"\\\\{ip_address}\\{target_drive}$\\{share_name.strip()}"
+        print(f"Attempting to map {network_path} to drive {drive_letter}:")
+
+        # Test the network path
+        if not test_network_path(network_path):
+            messagebox.showwarning("Error", f"The network path {network_path} could not be found.")
+            return
+
+        # Map the network drive
+        if var_credentials.get():
+            username = simpledialog.askstring("Credentials", "Enter username:")
+            password = simpledialog.askstring("Credentials", "Enter password:", show="*")
+            cmd = f"net use {drive_letter}: \"{network_path}\" /user:{username} {password} /persistent:yes"
+        else:
+            cmd = f"net use {drive_letter}: \"{network_path}\" /persistent:yes"
+
+        try:
+            result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT, universal_newlines=True)
+            print(f"Command output: {result}")
+            if "successfully" in result.lower():
+                messagebox.showinfo("Success", f"Drive {drive_letter}: mapped to {network_path} successfully!")
+            else:
+                raise subprocess.CalledProcessError(0, cmd, output=result)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed command: {cmd}")
+            print(f"Error output: {e.output}")
+            if "System error 85" in e.output:
+                messagebox.showwarning("Error", f"The local device name {drive_letter}: is already in use.")
+            elif "System error 67" in e.output:
+                messagebox.showwarning("Error",
+                                       f"The network name {share_name.strip()} cannot be found. Please check the IP address and share name.")
+            else:
+                messagebox.showerror("Error", f"Failed to map drive: {e.output}")
+                return
+
+
+def test_network_path(network_path):
+    try:
+        result = subprocess.check_output(f"dir {network_path}", shell=True, stderr=subprocess.STDOUT,
+                                         universal_newlines=True)
+        print(f"Network path test output: {result}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Failed network path test command: dir {network_path}")
+        print(f"Error output: {e.output}")
+        return False
+
+
+def select_share():
+    folders_selected = filedialog.askdirectory(mustexist=True)
+    if folders_selected:
+        # Extract the share name from the selected folder path
+        share_name = folders_selected.split('/')[-1]
+        entry_share.delete(0, tk.END)
+        entry_share.insert(0, share_name)
+
+
+# Create the main window
+root = tk.Tk()
+root.title("Map Network Drive")
+root.geometry("400x450")
+
+# Create labels and entries
+label_ip = tk.Label(root, text="Target IP Address:")
+label_ip.pack(pady=5)
+entry_ip = tk.Entry(root, width=30)
+entry_ip.pack(pady=5)
+
+button_check_ip = tk.Button(root, text="Check IP Address", command=check_ip_address)
+button_check_ip.pack(pady=5)
+
+label_status = tk.Label(root, text="")
+label_status.pack(pady=5)
+
+label_drive = tk.Label(root, text="Drive Letter:")
+label_drive.pack(pady=5)
+entry_drive = tk.Entry(root, width=30)
+entry_drive.pack(pady=5)
+
+label_target_drive = tk.Label(root, text="Target Drive Letter (e.g., C or D):")
+label_target_drive.pack(pady=5)
+entry_target_drive = tk.Entry(root, width=30)
+entry_target_drive.pack(pady=5)
+
+label_share = tk.Label(root, text="Share Name:")
+label_share.pack(pady=5)
+entry_share = tk.Entry(root, width=30)
+entry_share.pack(pady=5)
+
+button_share = tk.Button(root, text="Select Share", command=select_share)
+button_share.pack(pady=5)
+
+# Checkbox for requiring credentials
+var_credentials = tk.BooleanVar()
+check_credentials = tk.Checkbutton(root, text="Require Credentials", variable=var_credentials)
+check_credentials.pack(pady=10)
+
+# Map Drive button
+button_map = tk.Button(root, text="Map Drive", command=map_drive)
+button_map.pack(pady=20)
+
+# Run the application
+root.mainloop()
